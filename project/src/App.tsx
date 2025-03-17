@@ -6,7 +6,7 @@ import { supabase } from './lib/supabase';
 const WORKPLACES = [
   'La victoria',
   'Santa Anita',
-  'Huaycan',
+  'Huaycan2',
   'Vitarte',
   'Outro'
 ];
