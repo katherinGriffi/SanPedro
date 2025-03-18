@@ -3,15 +3,7 @@ import { Truck, Clock, MapPin, LogIn, LogOut, Calendar, User, MapPinned, Timer }
 import toast, { Toaster } from 'react-hot-toast';
 import { supabase } from './lib/supabase';
 
-const WORKPLACES = [
-  'La victoria',
-  'Santa Anita',
-  'Huaycan2',
-  'Vitarte',
-  'Outro'
-];
-
-function formatDuration(milliseconds: number): string {
+function formatDuration(milliseconds) {
   const seconds = Math.floor(milliseconds / 1000);
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -23,7 +15,8 @@ function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [workplace, setWorkplace] = useState(WORKPLACES[0]);
+  const [workplace, setWorkplace] = useState('');
+  const [customWorkplace, setCustomWorkplace] = useState('');
   const [timeEntry, setTimeEntry] = useState(null);
   const [isWorking, setIsWorking] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -31,19 +24,17 @@ function App() {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [userId, setUserId] = useState(null);
-  const [lastEntry, setLastEntry] = useState(null); // Último registro pendente
-  const [allEntries, setAllEntries] = useState([]); // Todos os registros do usuário
+  const [lastEntry, setLastEntry] = useState(null);
+  const [allEntries, setAllEntries] = useState([]);
+  const [workspaces, setWorkspaces] = useState([]);
 
-  // Atualiza o relógio a cada segundo
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
-
     return () => clearInterval(timer);
   }, []);
 
-  // Atualiza o tempo decorrido
   useEffect(() => {
     let interval;
     if (isWorking && timeEntry) {
@@ -54,7 +45,6 @@ function App() {
     return () => clearInterval(interval);
   }, [isWorking, timeEntry]);
 
-  // Obtém a localização atual
   useEffect(() => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -68,22 +58,40 @@ function App() {
     }
   }, []);
 
-  // Busca o último registro do usuário ao logar
   useEffect(() => {
     if (isLoggedIn && userId) {
       fetchLastEntry();
       fetchAllEntries();
+      fetchWorkspaces();
     }
   }, [isLoggedIn, userId]);
 
-  // Busca o último registro pendente
+  const fetchWorkspaces = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('workspaces')
+        .select('*')
+        .eq('ativo', true);
+
+      if (error) throw error;
+
+      setWorkspaces(data);
+      if (data.length > 0) {
+        setWorkplace(data[0].name);
+      }
+    } catch (error) {
+      console.error('Erro ao buscar workspaces:', error);
+      toast.error('Erro ao carregar locais de trabalho');
+    }
+  };
+
   const fetchLastEntry = async () => {
     try {
       const { data, error } = await supabase
         .from('time_entries')
         .select('*')
         .eq('user_id', userId)
-        .is('end_time', null) // Busca registros sem end_time
+        .is('end_time', null)
         .order('start_time', { ascending: false })
         .limit(1)
         .single();
@@ -101,15 +109,14 @@ function App() {
     }
   };
 
-  // Busca os últimos 15 registros do usuário
   const fetchAllEntries = async () => {
     try {
       const { data, error } = await supabase
         .from('time_entries')
         .select('*')
         .eq('user_id', userId)
-        .order('start_time', { ascending: false }) // Ordena do mais recente para o mais antigo
-        .limit(7); // Limita a 7 registros
+        .order('start_time', { ascending: false })
+        .limit(7);
 
       if (error) throw error;
 
@@ -126,26 +133,20 @@ function App() {
     setIsLoading(true);
 
     try {
-      console.log("Tentando autenticar usuário:", email);
-
-      // Autentica o usuário usando o sistema do Supabase
       const { data: { user }, error } = await supabase.auth.signInWithPassword({
-        email: email, // Usa o estado `email`
-        password: password,
+        email,
+        password,
       });
 
       if (error || !user) {
-        console.error("Erro ao autenticar:", error);
         toast.error('Usuário ou senha inválidos');
         return;
       }
 
-      console.log("Usuário autenticado com sucesso:", user);
       setIsLoggedIn(true);
-      setUserId(user.id); // Armazena o ID do usuário
+      setUserId(user.id);
       toast.success('Login realizado com sucesso!');
     } catch (error) {
-      console.error("Erro durante o login:", error);
       toast.error('Erro ao realizar login. Tente novamente.');
     } finally {
       setIsLoading(false);
@@ -153,13 +154,7 @@ function App() {
   };
 
   const handleStartWork = async () => {
-    console.log("Botão de início de expediente clicado!");
-    console.log("Estado de isLoggedIn:", isLoggedIn);
-    console.log("Usuário atual:", email);
-    console.log("ID do usuário:", userId);
-
     if (!isLoggedIn || !userId) {
-      console.log("Erro: Usuário não autenticado ou ID do usuário não encontrado.");
       toast.error('Usuário não autenticado');
       return;
     }
@@ -168,38 +163,32 @@ function App() {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           try {
-            console.log("Iniciando expediente para o usuário:", email);
+            const selectedWorkplace = workplace === 'Outro' ? customWorkplace : workplace;
 
             const newEntry = {
-              user_id: userId, // Usa o userId
-              workplace,
+              user_id: userId,
+              workplace: selectedWorkplace,
               start_time: new Date().toISOString(),
               start_latitude: position.coords.latitude,
-              start_longitude: position.coords.longitude
+              start_longitude: position.coords.longitude,
             };
-            
-            console.log("Criando nova entrada de expediente:", newEntry);
 
-            // Insere o registro e retorna os dados inseridos
             const { data: entry, error } = await supabase
               .from('time_entries')
               .insert([newEntry])
-              .select() // Retorna os dados inseridos
-              .single(); // Retorna um único registro
+              .select()
+              .single();
 
-            if (error) {
-              throw error;
-            }
+            if (error) throw error;
 
-            console.log("Expediente iniciado com sucesso:", entry);
-            setTimeEntry(entry); // Atualiza o estado com os dados inseridos
+            setTimeEntry(entry);
             setIsWorking(true);
             setCurrentLocation(position.coords);
-            localStorage.setItem('timeEntry', JSON.stringify(entry)); // Salva no localStorage
+            localStorage.setItem('timeEntry', JSON.stringify(entry));
             toast.success('Início do expediente registrado!');
-            fetchAllEntries(); // Atualiza a lista de registros
+            fetchAllEntries();
           } catch (error) {
-            console.error("Erro ao iniciar expediente:", error);
+            console.error('Erro ao iniciar expediente:', error);
             toast.error('Erro ao registrar início do expediente');
           }
         },
@@ -211,77 +200,51 @@ function App() {
   };
 
   const handleEndWork = async () => {
-    console.log("Botão de finalizar expediente clicado!");
-
     if (!navigator.geolocation) {
-      console.error("Geolocalização não suportada pelo navegador.");
       toast.error('Geolocalização não suportada');
       return;
     }
 
     if (!timeEntry?.id) {
-      console.error("Nenhum expediente ativo encontrado (timeEntry.id está ausente).");
-      console.log("Estado timeEntry:", timeEntry); // Log adicional para depuração
       toast.error('Nenhum expediente ativo encontrado');
       return;
     }
 
-    console.log("Obtendo localização atual...");
-
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
-          console.log("Localização obtida com sucesso:", position.coords);
-
           const updates = {
             end_time: new Date().toISOString(),
             end_latitude: position.coords.latitude,
-            end_longitude: position.coords.longitude
+            end_longitude: position.coords.longitude,
           };
-
-          console.log("Dados de atualização do expediente:", updates);
-
-          console.log("Atualizando expediente na tabela time_entries...");
 
           const { data: updatedEntry, error } = await supabase
             .from('time_entries')
             .update(updates)
             .eq('id', timeEntry.id)
-            .select() // Retorna os dados atualizados
-            .single(); // Retorna um único registro
+            .select()
+            .single();
 
-          if (error) {
-            console.error("Erro ao atualizar expediente:", error);
-            throw error;
-          }
+          if (error) throw error;
 
-          console.log("Expediente atualizado com sucesso:", updatedEntry);
-
-          const startTime = new Date(timeEntry.start_time).getTime();
-          const endTime = new Date(updates.end_time).getTime();
-          const totalTime = formatDuration(endTime - startTime);
-
-          console.log("Tempo total trabalhado:", totalTime);
-
+          const totalTime = formatDuration(new Date(updates.end_time).getTime() - new Date(timeEntry.start_time).getTime());
           toast.success(`Expediente finalizado! Tempo total trabalhado: ${totalTime}`);
 
-          // Limpar estado
           setTimeEntry(null);
           setIsWorking(false);
           setElapsedTime(0);
           setCurrentLocation(null);
           localStorage.removeItem('timeEntry');
-          setLastEntry(null); // Limpa o último registro pendente
-          fetchAllEntries(); // Atualiza a lista de registros
-
-          console.log("Estado limpo e expediente finalizado com sucesso.");
+          setLastEntry(null);
+          fetchAllEntries();
         } catch (error) {
-          console.error("Erro ao finalizar expediente:", error);
+          console.error('Erro ao finalizar expediente:', error);
           toast.error('Erro ao registrar fim do expediente');
         }
       },
       (error) => {
-        console.error("Erro ao obter localização:", error);
+        console.error('Erro ao obter localização:', error);
         toast.error('Não foi possível obter sua localização');
       }
     );
@@ -348,7 +311,7 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-3">
-              <Truck className="w-8 h-8 text-blue-800" /> {/* Azul escuro */}
+              <Truck className="w-8 h-8 text-blue-800" />
               <div>
                 <h1 className="text-xl font-bold text-gray-900">
                   San Pedro Cargo
@@ -361,7 +324,7 @@ function App() {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2 text-gray-700">
                 <User className="w-5 h-5" />
-                <span>{email}</span> {/* Exibe o email em vez do username */}
+                <span>{email}</span>
               </div>
               <div className="flex items-center space-x-2 text-gray-700">
                 <Clock className="w-5 h-5" />
@@ -477,13 +440,29 @@ function App() {
                     onChange={(e) => setWorkplace(e.target.value)}
                     className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border text-sm"
                   >
-                    {WORKPLACES.map((place) => (
-                      <option key={place} value={place}>
-                        {place}
+                    {workspaces.map((workspace) => (
+                      <option key={workspace.id} value={workspace.name}>
+                        {workspace.name}
                       </option>
                     ))}
+                    <option value="Outro">Outro</option>
                   </select>
                 </div>
+                
+                {workplace === 'Outro' && (
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Insira o local de trabalho manualmente
+                    </label>
+                    <input
+                      type="text"
+                      value={customWorkplace}
+                      onChange={(e) => setCustomWorkplace(e.target.value)}
+                      placeholder="Digite o local de trabalho"
+                      className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border text-sm"
+                    />
+                  </div>
+                )}
                 
                 <button
                   onClick={handleStartWork}
