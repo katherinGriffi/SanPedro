@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Truck, Clock, MapPin, LogIn, LogOut, Calendar, User, MapPinned, Timer } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
 import { supabase } from './lib/supabase';
+import { Calendar as BigCalendar, momentLocalizer } from 'react-big-calendar';
+import moment from 'moment';
+import 'react-big-calendar/lib/css/react-big-calendar.css';
+
+// Configuração do moment para o calendário
+const localizer = momentLocalizer(moment);
 
 function formatDuration(milliseconds) {
   const seconds = Math.floor(milliseconds / 1000);
@@ -20,6 +26,7 @@ function App() {
   const [timeEntry, setTimeEntry] = useState(null);
   const [isWorking, setIsWorking] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -27,6 +34,13 @@ function App() {
   const [lastEntry, setLastEntry] = useState(null);
   const [allEntries, setAllEntries] = useState([]);
   const [workspaces, setWorkspaces] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+
+  // Lista de usuários que só visualizam o Power BI
+  const powerBIUsers = ['admin_oficinas@sanpedrocargo.com', 'admin_ruta@sanpedrocargo.com'];
+
+  // Verifica se o usuário atual é um dos usuários específicos
+  const isPowerBIUser = powerBIUsers.includes(email);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -52,7 +66,7 @@ function App() {
           setCurrentLocation(position.coords);
         },
         () => {
-          toast.error('Não foi possível obter sua localização');
+          toast.error('No se pudo obtener su ubicación');
         }
       );
     }
@@ -65,6 +79,18 @@ function App() {
       fetchWorkspaces();
     }
   }, [isLoggedIn, userId]);
+
+  useEffect(() => {
+    if (allEntries.length > 0) {
+      const events = allEntries.map(entry => ({
+        title: entry.workplace,
+        start: new Date(entry.start_time),
+        end: entry.end_time ? new Date(entry.end_time) : new Date(),
+        allDay: false,
+      }));
+      setCalendarEvents(events);
+    }
+  }, [allEntries]);
 
   const fetchWorkspaces = async () => {
     try {
@@ -80,8 +106,8 @@ function App() {
         setWorkplace(data[0].name);
       }
     } catch (error) {
-      console.error('Erro ao buscar workspaces:', error);
-      toast.error('Erro ao carregar locais de trabalho');
+      console.error('Error al buscar espacios de trabajo:', error);
+      toast.error('Error al cargar los lugares de trabajo');
     }
   };
 
@@ -102,10 +128,10 @@ function App() {
         setLastEntry(data);
         setTimeEntry(data);
         setIsWorking(true);
-        toast('Você tem um apontamento pendente!', { icon: '⚠️' });
+        toast('Tienes un registro pendiente!', { icon: '⚠️' });
       }
     } catch (error) {
-      console.error('Erro ao buscar último registro pendente:', error);
+      console.error('Error al buscar último registro pendiente:', error);
     }
   };
 
@@ -115,8 +141,7 @@ function App() {
         .from('time_entries')
         .select('*')
         .eq('user_id', userId)
-        .order('start_time', { ascending: false })
-        .limit(7);
+        .order('start_time', { ascending: false });
 
       if (error) throw error;
 
@@ -124,7 +149,7 @@ function App() {
         setAllEntries(data);
       }
     } catch (error) {
-      console.error('Erro ao buscar todos os registros:', error);
+      console.error('Error al buscar todos los registros:', error);
     }
   };
 
@@ -139,15 +164,15 @@ function App() {
       });
 
       if (error || !user) {
-        toast.error('Usuário ou senha inválidos');
+        toast.error('Usuario o contraseña inválidos');
         return;
       }
 
       setIsLoggedIn(true);
       setUserId(user.id);
-      toast.success('Login realizado com sucesso!');
+      toast.success('Inicio de sesión exitoso!');
     } catch (error) {
-      toast.error('Erro ao realizar login. Tente novamente.');
+      toast.error('Error al iniciar sesión. Inténtelo de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -155,15 +180,18 @@ function App() {
 
   const handleStartWork = async () => {
     if (!isLoggedIn || !userId) {
-      toast.error('Usuário não autenticado');
+      toast.error('Usuario no autenticado');
       return;
     }
+
+    if (isProcessing) return;
+    setIsProcessing(true);
 
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           try {
-            const selectedWorkplace = workplace === 'Outro' ? customWorkplace : workplace;
+            const selectedWorkplace = workplace === 'Otro' ? customWorkplace : workplace;
 
             const newEntry = {
               user_id: userId,
@@ -185,15 +213,18 @@ function App() {
             setIsWorking(true);
             setCurrentLocation(position.coords);
             localStorage.setItem('timeEntry', JSON.stringify(entry));
-            toast.success('Início do expediente registrado!');
+            toast.success('Inicio del turno registrado!');
             fetchAllEntries();
           } catch (error) {
-            console.error('Erro ao iniciar expediente:', error);
-            toast.error('Erro ao registrar início do expediente');
+            console.error('Error al iniciar el turno:', error);
+            toast.error('Error al registrar el inicio del turno');
+          } finally {
+            setIsProcessing(false);
           }
         },
         () => {
-          toast.error('Não foi possível obter sua localização');
+          toast.error('No se pudo obtener su ubicación');
+          setIsProcessing(false);
         }
       );
     }
@@ -201,14 +232,17 @@ function App() {
 
   const handleEndWork = async () => {
     if (!navigator.geolocation) {
-      toast.error('Geolocalização não suportada');
+      toast.error('Geolocalización no soportada');
       return;
     }
 
     if (!timeEntry?.id) {
-      toast.error('Nenhum expediente ativo encontrado');
+      toast.error('No se encontró ningún turno activo');
       return;
     }
+
+    if (isProcessing) return;
+    setIsProcessing(true);
 
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -229,7 +263,7 @@ function App() {
           if (error) throw error;
 
           const totalTime = formatDuration(new Date(updates.end_time).getTime() - new Date(timeEntry.start_time).getTime());
-          toast.success(`Expediente finalizado! Tempo total trabalhado: ${totalTime}`);
+          toast.success(`Turno finalizado! Tiempo total trabajado: ${totalTime}`);
 
           setTimeEntry(null);
           setIsWorking(false);
@@ -239,15 +273,48 @@ function App() {
           setLastEntry(null);
           fetchAllEntries();
         } catch (error) {
-          console.error('Erro ao finalizar expediente:', error);
-          toast.error('Erro ao registrar fim do expediente');
+          console.error('Error al finalizar el turno:', error);
+          toast.error('Error al registrar el fin del turno');
+        } finally {
+          setIsProcessing(false);
         }
       },
       (error) => {
-        console.error('Erro ao obter localização:', error);
-        toast.error('Não foi possível obter sua localização');
+        console.error('Error al obtener la ubicación:', error);
+        toast.error('No se pudo obtener su ubicación');
+        setIsProcessing(false);
       }
     );
+  };
+
+  const eventStyleGetter = (event) => {
+    let backgroundColor = '#3174ad'; // Azul por defecto
+    if (event.status === 'finalizado') {
+      backgroundColor = '#28a745'; // Verde
+    } else if (event.status === 'en progreso') {
+      backgroundColor = '#ffc107'; // Amarillo
+    } else {
+      backgroundColor = '#dc3545'; // Rojo
+    }
+    return {
+      style: {
+        backgroundColor,
+        borderRadius: '4px',
+        color: 'white',
+        border: 'none',
+        padding: '2px 8px',
+        fontSize: '14px',
+      },
+    };
+  };
+
+  const generateCalendarEvents = () => {
+    return allEntries.map(entry => ({
+      title: entry.workplace,
+      start: new Date(entry.start_time),
+      end: entry.end_time ? new Date(entry.end_time) : new Date(),
+      status: entry.end_time ? 'finalizado' : 'en progreso',
+    }));
   };
 
   if (!isLoggedIn) {
@@ -259,7 +326,7 @@ function App() {
             <Truck className="w-12 h-12 text-blue-600" />
           </div>
           <h1 className="text-2xl font-bold text-center mb-8 text-gray-800">
-            Sistema de Apontamento
+            Turismo San Pedro
           </h1>
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
@@ -273,11 +340,12 @@ function App() {
                 placeholder="Email"
                 required
                 disabled={isLoading}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700">
-                Senha
+                Contraseña
               </label>
               <input
                 type="password"
@@ -294,7 +362,7 @@ function App() {
               disabled={isLoading}
             >
               <LogIn className="w-5 h-5 mr-2" />
-              {isLoading ? 'Entrando...' : 'Entrar'}
+              {isLoading ? 'Iniciando sesión...' : 'Iniciar sesión'}
             </button>
           </form>
         </div>
@@ -314,10 +382,10 @@ function App() {
               <Truck className="w-8 h-8 text-blue-800" />
               <div>
                 <h1 className="text-xl font-bold text-gray-900">
-                  San Pedro Cargo
+                  Turismo San Pedro 
                 </h1>
                 <p className="text-sm text-gray-500">
-                  Sistema de Apontamento
+                   Turismo San Pedro 
                 </p>
               </div>
             </div>
@@ -328,7 +396,7 @@ function App() {
               </div>
               <div className="flex items-center space-x-2 text-gray-700">
                 <Clock className="w-5 h-5" />
-                <span>{currentTime.toLocaleTimeString('pt-BR')}</span>
+                <span>{currentTime.toLocaleTimeString('es-ES')}</span>
               </div>
               {currentLocation && (
                 <div className="flex items-center space-x-2 text-gray-700">
@@ -352,231 +420,194 @@ function App() {
         </div>
       </div>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* Status Card */}
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Status do Expediente
-            </h2>
-            <div className="space-y-4">
-              <div className="flex items-start space-x-3">
-                <Calendar className="w-5 h-5 text-gray-500 mt-1" />
-                <div>
-                  <p className="text-sm font-medium text-gray-700">Data</p>
-                  <p className="text-sm text-gray-600">
-                    {new Date().toLocaleDateString('pt-BR', {
-                      weekday: 'long',
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric'
-                    })}
-                  </p>
+      {/* Conteúdo Principal */}
+      {isPowerBIUser ? (
+        // Exibe o Power BI em tela cheia para os usuários específicos
+        <div className="flex-1 p-4">
+          <iframe
+            title="horas"
+            width="100%"
+            height="801"
+            src="https://app.powerbi.com/view?r=eyJrIjoiOTEwODdmMmYtM2FjZC00ZDUyLWI1MjctM2IwYTVjM2RiMTNiIiwidCI6IjljNzI4NmYyLTg0OTUtNDgzZi1hMTc4LTQwMjZmOWU0ZTM2MiIsImMiOjR9"
+            frameBorder="0"
+            allowFullScreen
+            className="rounded-lg"
+          ></iframe>
+        </div>
+      ) : (
+        // Exibe o conteúdo normal para outros usuários
+        <main className="max-w-7xl mx-auto px-4 py-8">
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Status Card */}
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Estado del Turno
+              </h2>
+              <div className="space-y-4">
+                <div className="flex items-start space-x-3">
+                  <Calendar className="w-5 h-5 text-gray-500 mt-1" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Fecha</p>
+                    <p className="text-sm text-gray-600">
+                      {new Date().toLocaleDateString('es-ES', {
+                        weekday: 'long',
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      })}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              
-              {isWorking && timeEntry && (
-                <>
-                  <div className="flex items-start space-x-3">
-                    <Clock className="w-5 h-5 text-gray-500 mt-1" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Início do Expediente</p>
-                      <p className="text-sm text-gray-600">
-                        {new Date(timeEntry.start_time).toLocaleTimeString('pt-BR')}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-start space-x-3">
-                    <Timer className="w-5 h-5 text-gray-500 mt-1" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Tempo Decorrido</p>
-                      <p className="text-xl font-bold text-blue-600">
-                        {formatDuration(elapsedTime)}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-start space-x-3">
-                    <MapPinned className="w-5 h-5 text-gray-500 mt-1" />
-                    <div>
-                      <p className="text-sm font-medium text-gray-700">Local de Trabalho</p>
-                      <p className="text-sm text-gray-600">{timeEntry.workplace}</p>
-                    </div>
-                  </div>
-
-                  {currentLocation && (
+                
+                {isWorking && timeEntry && (
+                  <>
                     <div className="flex items-start space-x-3">
-                      <MapPin className="w-5 h-5 text-gray-500 mt-1" />
+                      <Clock className="w-5 h-5 text-gray-500 mt-1" />
                       <div>
-                        <p className="text-sm font-medium text-gray-700">Localização Atual</p>
+                        <p className="text-sm font-medium text-gray-700">Inicio del Turno</p>
                         <p className="text-sm text-gray-600">
-                          Lat: {currentLocation.latitude.toFixed(6)}<br />
-                          Long: {currentLocation.longitude.toFixed(6)}
+                          {new Date(timeEntry.start_time).toLocaleTimeString('es-ES')}
                         </p>
                       </div>
                     </div>
+                    
+                    <div className="flex items-start space-x-3">
+                      <Timer className="w-5 h-5 text-gray-500 mt-1" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Tiempo Transcurrido</p>
+                        <p className="text-xl font-bold text-blue-600">
+                          {formatDuration(elapsedTime)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start space-x-3">
+                      <MapPinned className="w-5 h-5 text-gray-500 mt-1" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Lugar de Trabajo</p>
+                        <p className="text-sm text-gray-600">{timeEntry.workplace}</p>
+                      </div>
+                    </div>
+
+                    {currentLocation && (
+                      <div className="flex items-start space-x-3">
+                        <MapPin className="w-5 h-5 text-gray-500 mt-1" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Ubicación Actual</p>
+                          <p className="text-sm text-gray-600">
+                            Lat: {currentLocation.latitude.toFixed(6)}<br />
+                            Long: {currentLocation.longitude.toFixed(6)}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Action Card */}
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                {isWorking ? 'Finalizar Turno' : 'Iniciar Turno'}
+              </h2>
+              
+              {!isWorking ? (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Lugar de Trabajo
+                    </label>
+                    <select
+                      value={workplace}
+                      onChange={(e) => setWorkplace(e.target.value)}
+                      className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border text-sm"
+                    >
+                      {workspaces.map((workspace) => (
+                        <option key={workspace.id} value={workspace.name}>
+                          {workspace.name}
+                        </option>
+                      ))}
+                      <option value="Otro">Otro</option>
+                    </select>
+                  </div>
+                  
+                  {workplace === 'Otro' && (
+                    <div className="mt-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Ingrese el lugar de trabajo manualmente
+                      </label>
+                      <input
+                        type="text"
+                        value={customWorkplace}
+                        onChange={(e) => setCustomWorkplace(e.target.value)}
+                        placeholder="Ingrese el lugar de trabajo"
+                        className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border text-sm"
+                      />
+                    </div>
                   )}
-                </>
+                  
+                  <button
+                    onClick={handleStartWork}
+                    disabled={isProcessing}
+                    className="w-full bg-blue-600 text-white p-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 font-medium disabled:opacity-50"
+                  >
+                    <Clock className="w-5 h-5" />
+                    <span>{isProcessing ? 'Procesando...' : 'Iniciar Turno'}</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4">
+                    <div className="flex items-center space-x-2 text-yellow-800">
+                      <MapPin className="w-5 h-5" />
+                      <span className="font-medium">Turno en progreso</span>
+                    </div>
+                    <p className="mt-1 text-sm text-yellow-700">
+                      Asegúrese de finalizar su turno antes de salir.
+                    </p>
+                  </div>
+                  
+                  <button
+                    onClick={handleEndWork}
+                    disabled={isProcessing}
+                    className="w-full bg-red-600 text-white p-4 rounded-lg shadow-sm hover:bg-red-700 transition-colors flex items-center justify-center space-x-2 font-medium disabled:opacity-50"
+                  >
+                    <Clock className="w-5 h-5" />
+                    <span>{isProcessing ? 'Procesando...' : 'Finalizar Turno'}</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
 
-          {/* Action Card */}
-          <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              {isWorking ? 'Finalizar Expediente' : 'Iniciar Expediente'}
-            </h2>
-            
-            {!isWorking ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Local de Trabalho
-                  </label>
-                  <select
-                    value={workplace}
-                    onChange={(e) => setWorkplace(e.target.value)}
-                    className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border text-sm"
-                  >
-                    {workspaces.map((workspace) => (
-                      <option key={workspace.id} value={workspace.name}>
-                        {workspace.name}
-                      </option>
-                    ))}
-                    <option value="Outro">Outro</option>
-                  </select>
-                </div>
-                
-                {workplace === 'Outro' && (
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Insira o local de trabalho manualmente
-                    </label>
-                    <input
-                      type="text"
-                      value={customWorkplace}
-                      onChange={(e) => setCustomWorkplace(e.target.value)}
-                      placeholder="Digite o local de trabalho"
-                      className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2.5 border text-sm"
-                    />
-                  </div>
-                )}
-                
-                <button
-                  onClick={handleStartWork}
-                  className="w-full bg-blue-600 text-white p-4 rounded-lg shadow-sm hover:bg-blue-700 transition-colors flex items-center justify-center space-x-2 font-medium"
-                >
-                  <Clock className="w-5 h-5" />
-                  <span>Iniciar Expediente</span>
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-4">
-                  <div className="flex items-center space-x-2 text-yellow-800">
-                    <MapPin className="w-5 h-5" />
-                    <span className="font-medium">Expediente em andamento</span>
-                  </div>
-                  <p className="mt-1 text-sm text-yellow-700">
-                    Certifique-se de finalizar seu expediente antes de sair.
-                  </p>
-                </div>
-                
-                <button
-                  onClick={handleEndWork}
-                  className="w-full bg-red-600 text-white p-4 rounded-lg shadow-sm hover:bg-red-700 transition-colors flex items-center justify-center space-x-2 font-medium"
-                >
-                  <Clock className="w-5 h-5" />
-                  <span>Finalizar Expediente</span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Último Registro Pendente */}
-        {lastEntry && !isWorking && (
+          {/* Calendário */}
           <div className="mt-8 bg-white rounded-xl shadow-sm p-6 border border-gray-100">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Último Registro Pendente
-            </h2>
-            <div className="space-y-4">
-              <div className="flex items-start space-x-3">
-                <Clock className="w-5 h-5 text-gray-500 mt-1" />
-                <div>
-                  <p className="text-sm font-medium text-gray-700">Início do Expediente</p>
-                  <p className="text-sm text-gray-600">
-                    {new Date(lastEntry.start_time).toLocaleTimeString('pt-BR')}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-start space-x-3">
-                <MapPinned className="w-5 h-5 text-gray-500 mt-1" />
-                <div>
-                  <p className="text-sm font-medium text-gray-700">Local de Trabalho</p>
-                  <p className="text-sm text-gray-600">{lastEntry.workplace}</p>
-                </div>
-              </div>
-              <button
-                onClick={handleEndWork}
-                className="w-full bg-red-600 text-white p-4 rounded-lg shadow-sm hover:bg-red-700 transition-colors flex items-center justify-center space-x-2 font-medium"
-              >
-                <Clock className="w-5 h-5" />
-                <span>Finalizar Expediente Pendente</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Tabela de Registros */}
-        {allEntries.length > 0 && (
-          <div className="mt-8 bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Histórico de Registros (Últimos 7)
+              Calendario de Trabajo
             </h2>
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Data e Hora de Início
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Data e Hora de Término
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Local de Trabalho
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Coordenadas
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {allEntries.map((entry) => (
-                    <tr key={entry.id}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {new Date(entry.start_time).toLocaleString('pt-BR')}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {entry.end_time ? new Date(entry.end_time).toLocaleString('pt-BR') : 'Em andamento'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {entry.workplace}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        Lat: {entry.start_latitude?.toFixed(6)}, Long: {entry.start_longitude?.toFixed(6)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <BigCalendar
+                localizer={localizer}
+                events={generateCalendarEvents()}
+                startAccessor="start"
+                endAccessor="end"
+                style={{ height: 500 }}
+                eventPropGetter={eventStyleGetter}
+                defaultView="month"
+                messages={{
+                  today: 'Hoy',
+                  previous: 'Anterior',
+                  next: 'Siguiente',
+                  month: 'Mes',
+                  week: 'Semana',
+                  day: 'Día',
+                }}
+              />
             </div>
           </div>
-        )}
-      </main>
+        </main>
+      )}
     </div>
   );
 }
